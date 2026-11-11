@@ -11,7 +11,9 @@ final class Markup: NSObject, NSSharingServiceDelegate {
     /// Called with the file once the edited image has been written back.
     var onSaved: (URL) -> Void = { _ in }
 
-    private var editing: URL?
+    /// The file each open editor writes back to. Two editors can be open at
+    /// once, and each must save over its own photo.
+    private var editing: [ObjectIdentifier: URL] = [:]
     private static let serviceName = NSSharingService.Name("com.apple.MarkupUI.Markup")
 
     func edit(_ url: URL) {
@@ -21,7 +23,7 @@ final class Markup: NSObject, NSSharingServiceDelegate {
             NSWorkspace.shared.open(url)
             return
         }
-        editing = url
+        editing[ObjectIdentifier(service)] = url
         service.delegate = self
         placeAnchor()
         NSApp.activate(ignoringOtherApps: true)
@@ -33,11 +35,14 @@ final class Markup: NSObject, NSSharingServiceDelegate {
     /// Done was pressed. The extension hands back the edited image and the
     /// host app is the one that writes it over the original file.
     nonisolated func sharingService(_ sharingService: NSSharingService, didShareItems items: [Any]) {
-        MainActor.assumeIsolated { self.save(items) }
+        let id = ObjectIdentifier(sharingService)
+        MainActor.assumeIsolated { self.save(items, for: id) }
     }
 
     nonisolated func sharingService(_ sharingService: NSSharingService,
                                     didFailToShareItems items: [Any], error: Error) {
+        let id = ObjectIdentifier(sharingService)
+        MainActor.assumeIsolated { _ = self.editing.removeValue(forKey: id) }
         log.notice("Markup ended without saving: \(error.localizedDescription, privacy: .public)")
     }
 
@@ -135,9 +140,8 @@ final class Markup: NSObject, NSSharingServiceDelegate {
 
     // MARK: Writing back
 
-    private func save(_ items: [Any]) {
-        guard let target = editing, let item = items.first else { return }
-        editing = nil
+    private func save(_ items: [Any], for id: ObjectIdentifier) {
+        guard let target = editing.removeValue(forKey: id), let item = items.first else { return }
         log.notice("Markup returned \(String(describing: type(of: item)), privacy: .public)")
 
         switch item {
@@ -186,10 +190,18 @@ final class Markup: NSObject, NSSharingServiceDelegate {
 
     private func write(data: Data?, to target: URL) {
         guard let data else { return }
+        // Replacing the file, rather than writing over it, keeps its creation
+        // date and its screenshot tag, so it keeps its place and stays a
+        // screenshot to the folder watcher and to Spotlight.
+        let temp = target.deletingLastPathComponent()
+            .appendingPathComponent(".markup-\(UUID().uuidString)")
+            .appendingPathExtension(target.pathExtension)
         do {
-            try data.write(to: target, options: .atomic)
+            try data.write(to: temp)
+            _ = try FileManager.default.replaceItemAt(target, withItemAt: temp)
             onSaved(target)
         } catch {
+            try? FileManager.default.removeItem(at: temp)
             log.error("Could not save markup: \(error.localizedDescription, privacy: .public)")
             NSSound.beep()
         }
