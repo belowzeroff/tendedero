@@ -340,6 +340,33 @@ struct CheckFailed: Error { let message: String }
         eviction.toggleSelection(oldest)
         _ = eviction.hang(c, quietly: true)
         try check(eviction.selectedIDs.isEmpty && FileManager.default.fileExists(atPath: a.path), "Capacity eviction clears stale selection without deleting an external file")
+
+        let pinnedFull = self.line()
+        pinnedFull.maxItems = 2
+        let p1 = try png("P1.png", in: Inbox.folder), p2 = try png("P2.png", in: Inbox.folder)
+        let fresh = try png("Fresh.png", in: Inbox.folder)
+        pinnedFull.pin(pinnedFull.hang(p1, quietly: true)!, quietly: true)
+        pinnedFull.pin(pinnedFull.hang(p2, quietly: true)!, quietly: true)
+        let freshID = pinnedFull.hang(fresh, quietly: true)
+        try check(freshID != nil && FileManager.default.fileExists(atPath: fresh.path) && pinnedFull.liveCount == 3,
+                  "A new capture on a line full of pinned photos hangs instead of going to the Trash")
+
+        let gaps = self.line()
+        let h = try png("H.png"), p = try png("P.png"), q = try png("Q.png"), l = try png("L.png")
+        _ = gaps.hangKept(h)
+        let hID = gaps.items[0].id
+        let pID = gaps.hang(p, quietly: true)!
+        gaps.pin(pID, quietly: true)
+        gaps.pin(gaps.hang(q, quietly: true)!, quietly: true)
+        let lID = gaps.hang(l, quietly: true)!
+        gaps.drop(hID, quietly: true)
+        gaps.unpin(pID)
+        let live = { gaps.items.filter { !$0.falling } }
+        try check(live().map(\.url) == [q, p, l] && live().map(\.kept) == [true, false, false],
+                  "Unpinning beside a pinned photo's empty place puts it first past the knot")
+        gaps.pin(lID, quietly: true)
+        try check(live().map(\.url) == [q, l, p] && live().map(\.kept) == [true, true, false],
+                  "Pinning beside a pinned photo's empty place puts it after the pinned ones")
         try checkDesktopCopies()
     }
 

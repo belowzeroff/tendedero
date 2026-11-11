@@ -145,7 +145,10 @@ final class Line: ObservableObject {
         // A full line lets the oldest photo fall off the far end. Only one: a
         // line hung on a wider screen keeps its length here instead of losing
         // several photos to a single capture.
-        if liveCount > maxItems, let oldest = oldestLoose {
+        // Never the new one itself: on a line of pinned and held photos it
+        // hangs past the limit instead of going straight to the Trash.
+        if liveCount > maxItems,
+           let oldest = items.first(where: { !$0.falling && !$0.kept && !$0.held && $0.id != item.id }) {
             letGo(oldest.id)
         }
         save()
@@ -811,7 +814,7 @@ final class Line: ObservableObject {
         let before = TakenDown(url: item.url, index: index, trashed: nil,
                                kept: item.kept, byHand: item.byHand, pinChange: true)
         item.kept = true
-        items.insert(item, at: keptCount)
+        items.insert(item, at: pinnedLead)
         save()
         remember(before, in: step)
         if !quietly { play("Tink", volume: 0.35) }
@@ -826,7 +829,7 @@ final class Line: ObservableObject {
         let before = TakenDown(url: item.url, index: index, trashed: nil,
                                kept: item.kept, byHand: item.byHand, pinChange: true)
         item.kept = false
-        items.insert(item, at: keptCount)
+        items.insert(item, at: pinnedLead)
         save()
         remember(before, in: step)
     }
@@ -847,7 +850,7 @@ final class Line: ObservableObject {
         var item = items.remove(at: i)
         item.kept = true
         item.byHand = true
-        items.insert(item, at: keptCount)
+        items.insert(item, at: pinnedLead)
         save()
         return true
     }
