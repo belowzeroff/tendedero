@@ -268,7 +268,9 @@ final class ScreenshotWatcher {
             } else if length == 0 {
                 return true
             }
-            guard length >= 8 else { return false }
+            // A box running past the end, or a length too large to add,
+            // means the file is not whole yet, or is broken.
+            guard length >= 8, length <= size - offset else { return false }
             offset += length
         }
         return offset == size
