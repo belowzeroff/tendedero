@@ -52,18 +52,24 @@ enum Inbox {
     }
 
     /// Whether macOS is currently sending screenshots to our folder.
-    static var isApplied: Bool {
-        guard let current = CFPreferencesCopyAppValue(locationKey, domain) as? String else { return false }
-        return URL(fileURLWithPath: (current as NSString).expandingTildeInPath).standardizedFileURL
-            == folder.standardizedFileURL
+    static var isApplied: Bool { pointsToFolder(locationKey) }
+
+    /// Compared as paths, so it still matches when the folder has gone
+    /// missing and a URL would lose its trailing slash.
+    private static func pointsToFolder(_ key: CFString) -> Bool {
+        guard let current = CFPreferencesCopyAppValue(key, domain) as? String else { return false }
+        return ((current as NSString).expandingTildeInPath as NSString).standardizingPath
+            == (folder.path as NSString).standardizingPath
     }
 
     static func apply() {
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         // Never save our own values as the "previous" ones, for example after
-        // a crash left them applied.
-        var saved = UserDefaults.standard.dictionary(forKey: savedKey) ?? [:]
-        if !isApplied {
+        // a crash left them applied. Saved values that were never put back
+        // are still the user's, even if the folder was changed since.
+        let previous = UserDefaults.standard.dictionary(forKey: savedKey)
+        var saved = previous ?? [:]
+        if previous == nil && !isApplied {
             saved = [:]
             saved["location"] = CFPreferencesCopyAppValue(locationKey, domain) as? String
             saved["locationScreenshot"] = CFPreferencesCopyAppValue(screenshotLocationKey, domain) as? String
@@ -91,16 +97,23 @@ enum Inbox {
         set(thumbnailKey, false)
     }
 
+    /// Only what still holds our value is put back: a setting changed since
+    /// in Cmd+Shift+5 is the user's new choice and stays.
     static func restore() {
-        guard isApplied else { return }
-        let saved = UserDefaults.standard.dictionary(forKey: savedKey) ?? [:]
-        set(locationKey, saved["location"])
-        set(screenshotLocationKey, saved["locationScreenshot"])
-        set(recordingLocationKey, saved["locationRecording"])
-        set(targetKey, saved["target"])
-        set(screenshotTargetKey, saved["targetScreenshot"])
-        set(recordingTargetKey, saved["targetRecording"])
-        set(thumbnailKey, saved["thumbnail"])
+        guard let saved = UserDefaults.standard.dictionary(forKey: savedKey) else { return }
+        let locations = [(locationKey, "location"), (screenshotLocationKey, "locationScreenshot"),
+                         (recordingLocationKey, "locationRecording")]
+        for (key, name) in locations where pointsToFolder(key) {
+            set(key, saved[name])
+        }
+        let targets = [(targetKey, "target"), (screenshotTargetKey, "targetScreenshot"),
+                       (recordingTargetKey, "targetRecording")]
+        for (key, name) in targets where CFPreferencesCopyAppValue(key, domain) as? String == "file" {
+            set(key, saved[name])
+        }
+        if CFPreferencesCopyAppValue(thumbnailKey, domain) as? Bool == false {
+            set(thumbnailKey, saved["thumbnail"])
+        }
         UserDefaults.standard.removeObject(forKey: savedKey)
     }
 
